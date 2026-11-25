@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#171313">
+<title>Badtameez Dil · QR Check-in</title>
+<style>
+:root{color-scheme:dark;--bg:#0c0b0b;--panel:#191414;--line:#56323c;--wine:#9d3046;--cream:#f3e9d8;--muted:#c9bbaa;--pink:#e7a0ae}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#321a22 0,#0c0b0b 58%);color:var(--cream);font:15px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;padding:20px}
+main{max-width:620px;margin:0 auto;padding:24px 0}.brand{text-align:center;margin:12px 0 25px}.eyebrow{font-size:10px;letter-spacing:.3em;color:var(--pink);text-transform:uppercase}.brand h1{font:600 38px Georgia,serif;margin:9px 0 5px}.brand p{color:var(--muted);margin:0;font-size:13px}
+.panel{background:rgba(25,20,20,.96);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 20px 60px #0008}.status{padding:12px 14px;border:1px solid #49343a;border-radius:10px;color:var(--muted);line-height:1.5;margin-bottom:15px;min-height:48px}.status.error{color:#ffb5bf;border-color:#85404e}.status.ok{color:#a7e5b6;border-color:#3f7650}.camera{width:100%;aspect-ratio:4/3;object-fit:cover;background:#050505;border-radius:12px;border:1px solid #49343a;display:block}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}button{border:0;border-radius:9px;padding:13px 17px;background:linear-gradient(135deg,#a43a51,#702033);color:white;font-weight:650;cursor:pointer;min-height:46px}button.secondary{background:#302529;border:1px solid #65404a}button:disabled{opacity:.5;cursor:not-allowed}.field{margin-top:18px}.field label{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#e6d7c5;margin-bottom:8px}input{width:100%;height:48px;border:1px solid #65404a;border-radius:9px;background:#100e0e;color:white;padding:0 13px;font-size:16px}small{display:block;color:var(--muted);line-height:1.55;margin-top:13px}.foot{text-align:center;color:#9b8d83;font-size:11px;margin-top:18px;letter-spacing:.06em}
+</style>
+</head>
+<body>
+<main>
+  <header class="brand"><div class="eyebrow">Official event entry</div><h1>Badtameez Dil</h1><p>Secure QR check-in</p></header>
+  <section class="panel">
+    <div id="status" class="status" role="status" aria-live="polite">Connecting securely to the admin dashboard…</div>
+    <video id="video" class="camera" playsinline muted autoplay></video>
+    <div class="actions"><button id="start">Start camera</button><button id="stop" class="secondary" disabled>Stop camera</button></div>
+    <div class="field"><label for="manual">Manual ticket ID</label><input id="manual" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="BDT-3A6643857B1D"></div>
+    <div class="actions"><button id="sendManual" class="secondary">Send ticket ID to dashboard</button></div>
+    <small>This page does not store attendee data or contain an admin login token. The authenticated admin dashboard receives the ticket ID and asks the existing Apps Script backend to validate it.</small>
+  </section>
+  <div class="foot">One ticket · One attendee · One entry</div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script>
+// IMPORTANT: Set this to the exact origin shown by window.location.origin
+// in the signed-in Apps Script admin dashboard (no path and no trailing slash).
+const ALLOWED_DASHBOARD_ORIGIN = 'https://script.google.com';
+const statusEl = document.getElementById('status');
+const video = document.getElementById('video');
+const startBtn = document.getElementById('start');
+const stopBtn = document.getElementById('stop');
+let stream = null, detector = null, running = false, frame = 0, nonce = '';
+let dashboardOrigin = '';
+function setStatus(message, type) { statusEl.textContent = message; statusEl.className = 'status' + (type ? ' ' + type : ''); }
+function validId(value) { return /^BDT-[A-Z0-9]{12}$/.test(value) || /^BD-COMP-[A-Z0-9]{10}$/.test(value); }
+function stopCamera() {
+  running = false;
+  if (frame) cancelAnimationFrame(frame);
+  frame = 0;
+  if (stream) { stream.getTracks().forEach(track => track.stop()); stream = null; }
+  video.srcObject = null;
+  stopBtn.disabled = true;
+  startBtn.disabled = false;
+}
+function sendTicketId(value) {
+  const id = String(value || '').trim().toUpperCase();
+  if (!validId(id)) { setStatus('Invalid QR content. A ticket ID such as BDT-3A6643857B1D is required.', 'error'); return; }
+  if (!window.opener || window.opener.closed || !nonce || !dashboardOrigin) {
+    setStatus('The admin dashboard connection is unavailable. Close this tab and reopen the scanner from the signed-in dashboard.', 'error'); return;
+  }
+  stopCamera();
+  window.opener.postMessage({type:'BD_TICKET_SCAN', nonce:nonce, ticketId:id}, dashboardOrigin);
+  document.getElementById('manual').value = id;
+  setStatus('Ticket ID sent securely to the admin dashboard. Wait for its validation result.', 'ok');
+}
+window.addEventListener('message', event => {
+  if (event.source !== window.opener || event.origin !== ALLOWED_DASHBOARD_ORIGIN) return;
+  const data = event.data || {};
+  if (data.type === 'BD_SCANNER_INIT' && typeof data.nonce === 'string' && /^[a-f0-9]{64}$/.test(data.nonce)) {
+    nonce = data.nonce;
+    dashboardOrigin = event.origin;
+    setStatus('Connected to the admin dashboard. Start the camera and scan a ticket.');
+  }
+});
+if (window.opener) window.opener.postMessage({type:'BD_SCANNER_READY'}, '*');
+else setStatus('Open this scanner using the Open QR Scanner button inside the signed-in admin dashboard.', 'error');
+
+async function startCamera() {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('Camera access requires HTTPS and a supported mobile browser. Use the manual ticket ID field if camera access is unavailable.', 'error'); return;
+  }
+  if (!nonce || !dashboardOrigin) { setStatus('Waiting for a secure dashboard connection. Reopen this page from the admin dashboard.', 'error'); return; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
+    video.srcObject = stream;
+    await video.play();
+    detector = null;
+    if ('BarcodeDetector' in window) { try { detector = new BarcodeDetector({formats:['qr_code']}); } catch (e) {} }
+    if (!detector && typeof window.jsQR !== 'function') throw new Error('QR decoder could not load. Check your internet connection or use manual ticket ID entry.');
+    running = true; startBtn.disabled = true; stopBtn.disabled = false;
+    setStatus('Camera active. Hold the QR code steady inside the camera view.');
+    scanFrame();
+  } catch (e) {
+    stopCamera();
+    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') setStatus('Camera permission denied. In Android browser site settings, allow Camera for this HTTPS scanner website, then reload and try again.', 'error');
+    else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') setStatus('No camera was found on this device. Use manual ticket ID entry.', 'error');
+    else if (e.name === 'NotReadableError' || e.name === 'TrackStartError') setStatus('The camera is busy in another app. Close other camera apps and try again.', 'error');
+    else setStatus(e.message || 'Unable to start camera. Use manual ticket ID entry.', 'error');
+  }
+}
+async function scanFrame() {
+  if (!running) return;
+  try {
+    if (detector && video.readyState >= 2) {
+      const codes = await detector.detect(video);
+      if (codes.length) { sendTicketId(codes[0].rawValue); return; }
+    } else if (video.readyState >= 2) {
+      const canvas = scanFrame.canvas || (scanFrame.canvas = document.createElement('canvas'));
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d', {willReadFrequently:true});
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(image.data, image.width, image.height, {inversionAttempts:'attemptBoth'});
+      if (code) { sendTicketId(code.data); return; }
+    }
+  } catch (e) {
+    if (detector) { detector = null; if (typeof window.jsQR !== 'function') { stopCamera(); setStatus('Native QR scanning failed and the fallback library is unavailable. Check your connection or use manual ticket ID entry.', 'error'); return; } }
+  }
+  frame = requestAnimationFrame(scanFrame);
+}
+startBtn.addEventListener('click', startCamera);
+stopBtn.addEventListener('click', () => { stopCamera(); setStatus('Camera stopped.'); });
+document.getElementById('sendManual').addEventListener('click', () => sendTicketId(document.getElementById('manual').value));
+document.getElementById('manual').addEventListener('keydown', e => { if (e.key === 'Enter') sendTicketId(e.target.value); });
+window.addEventListener('pagehide', stopCamera);
+</script>
+</body>
+</html>
