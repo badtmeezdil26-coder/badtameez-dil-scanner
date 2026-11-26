@@ -58,17 +58,36 @@ function sendTicketId(value) {
   document.getElementById('manual').value = id;
   setStatus('Ticket ID sent securely to the admin dashboard. Wait for its validation result.', 'ok');
 }
+let readyTimer = null;
+function announceReady() {
+  if (!nonce && window.opener && !window.opener.closed) {
+    window.opener.postMessage({type:'BD_SCANNER_READY'}, '*');
+  }
+}
 window.addEventListener('message', event => {
   if (event.source !== window.opener || event.origin !== ALLOWED_DASHBOARD_ORIGIN) return;
   const data = event.data || {};
   if (data.type === 'BD_SCANNER_INIT' && typeof data.nonce === 'string' && /^[a-f0-9]{64}$/.test(data.nonce)) {
     nonce = data.nonce;
     dashboardOrigin = event.origin;
+    if (readyTimer) { clearInterval(readyTimer); readyTimer = null; }
     setStatus('Connected to the admin dashboard. Start the camera and scan a ticket.');
   }
 });
-if (window.opener) window.opener.postMessage({type:'BD_SCANNER_READY'}, '*');
-else setStatus('Open this scanner using the Open QR Scanner button inside the signed-in admin dashboard.', 'error');
+if (window.opener) {
+  // Retry READY until the dashboard answers; this avoids losing the first message during page load.
+  announceReady();
+  readyTimer = setInterval(() => {
+    if (!window.opener || window.opener.closed) {
+      clearInterval(readyTimer); readyTimer = null;
+      setStatus('The admin dashboard was closed. Reopen this scanner from the signed-in dashboard.', 'error');
+      return;
+    }
+    announceReady();
+  }, 700);
+} else {
+  setStatus('Open this scanner using the Open QR Scanner button inside the signed-in admin dashboard.', 'error');
+}
 
 async function startCamera() {
   if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
