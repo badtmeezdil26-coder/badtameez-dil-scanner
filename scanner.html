@@ -34,7 +34,8 @@ const statusEl = document.getElementById('status');
 const video = document.getElementById('video');
 const startBtn = document.getElementById('start');
 const stopBtn = document.getElementById('stop');
-let stream = null, detector = null, running = false, frame = 0, nonce = '';
+let stream = null, detector = null, running = false, frame = 0, nonce = '', pendingScanId = '';
+let resultTimeout = null;
 let dashboardOrigin = '';
 function setStatus(message, type) { statusEl.textContent = message; statusEl.className = 'status' + (type ? ' ' + type : ''); }
 function validId(value) { return /^BDT-[A-Z0-9]{12}$/.test(value) || /^BD-COMP-[A-Z0-9]{10}$/.test(value); }
@@ -54,9 +55,12 @@ function sendTicketId(value) {
     setStatus('The admin dashboard connection is unavailable. Close this tab and reopen the scanner from the signed-in dashboard.', 'error'); return;
   }
   stopCamera();
-  window.opener.postMessage({type:'BD_TICKET_SCAN', nonce:nonce, ticketId:id}, dashboardOrigin);
+  pendingScanId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+  window.opener.postMessage({type:'BD_TICKET_SCAN', nonce:nonce, scanId:pendingScanId, ticketId:id}, dashboardOrigin);
   document.getElementById('manual').value = id;
-  setStatus('Ticket ID sent securely to the admin dashboard. Wait for its validation result.', 'ok');
+  setStatus('Ticket ID sent. Waiting for server-side validation…');
+  if (resultTimeout) clearTimeout(resultTimeout);
+  resultTimeout = setTimeout(() => { if (pendingScanId) setStatus('No validation response received. Check the dashboard connection and try the ticket ID again.', 'error'); }, 25000);
 }
 window.addEventListener('message', event => {
   if (event.source !== window.opener || event.origin !== ALLOWED_DASHBOARD_ORIGIN) return;
@@ -68,6 +72,13 @@ window.addEventListener('message', event => {
     window.opener.postMessage({type:'BD_SCANNER_CONNECTED', nonce:nonce}, dashboardOrigin);
     setStatus('Connected to the admin dashboard. Start the camera and scan a ticket.', 'ok');
   }
+  if (data.type === 'BD_SCANNER_RESULT' && data.nonce === nonce && data.scanId === pendingScanId) {
+      pendingScanId = '';
+      if (resultTimeout) { clearTimeout(resultTimeout); resultTimeout = null; }
+      const r = data.result || {};
+      const details = r.attendeeName ? ' · ' + r.attendeeName : '';
+      setStatus((r.message || 'Validation completed.') + details, r.canCheckIn ? 'ok' : 'error');
+    }
 });
 
 // The opener installs its listener before navigating this page. Repeat READY
@@ -133,7 +144,7 @@ startBtn.addEventListener('click', startCamera);
 stopBtn.addEventListener('click', () => { stopCamera(); setStatus('Camera stopped.'); });
 document.getElementById('sendManual').addEventListener('click', () => sendTicketId(document.getElementById('manual').value));
 document.getElementById('manual').addEventListener('keydown', e => { if (e.key === 'Enter') sendTicketId(e.target.value); });
-window.addEventListener('pagehide', () => { stopCamera(); if (readyRetry) clearInterval(readyRetry); });
+window.addEventListener('pagehide', () => { stopCamera(); if (readyRetry) clearInterval(readyRetry); if (resultTimeout) clearTimeout(resultTimeout); });
 </script>
 </body>
 </html>
