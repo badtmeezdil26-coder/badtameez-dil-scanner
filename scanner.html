@@ -8,7 +8,7 @@
 *{box-sizing:border-box}html{min-height:100%;background:var(--bg)}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top,#321a22 0,#0c0b0b 58%);color:var(--cream);font:15px system-ui,-apple-system,Segoe UI,sans-serif;padding:clamp(10px,3vw,22px);padding-bottom:calc(18px + env(safe-area-inset-bottom))}
 main{width:min(100%,620px);margin:0 auto;padding:clamp(8px,3vw,22px) 0}.brand{text-align:center;margin:8px 0 20px}.eyebrow{font-size:10px;letter-spacing:.3em;color:var(--pink);text-transform:uppercase}.brand h1{font:600 clamp(30px,8vw,40px) Georgia,serif;margin:8px 0 4px}.brand p{color:var(--muted);margin:0;font-size:13px}
 .panel{background:rgba(25,20,20,.97);border:1px solid var(--line);border-radius:18px;padding:clamp(14px,4vw,22px);box-shadow:0 20px 60px #0008}.status{padding:12px 14px;border:1px solid #49343a;border-radius:10px;color:var(--muted);line-height:1.5;margin-bottom:14px;min-height:46px}.status.error{color:var(--bad);border-color:#85404e}.status.ok{color:var(--good);border-color:#3f7650}.camera{width:100%;aspect-ratio:4/3;max-height: min(52vh,440px);object-fit:cover;background:#050505;border-radius:12px;border:1px solid #49343a;display:block}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:13px}button{border:0;border-radius:9px;padding:13px 17px;background:linear-gradient(135deg,#a43a51,#702033);color:white;font-weight:700;cursor:pointer;min-height:46px;touch-action:manipulation;flex:1 1 150px}button.secondary{background:#302529;border:1px solid #65404a}button:disabled{opacity:.52;cursor:not-allowed}.field{margin-top:17px}.field label{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#e6d7c5;margin-bottom:8px}input{width:100%;height:48px;border:1px solid #65404a;border-radius:9px;background:#100e0e;color:white;padding:0 13px;font-size:16px}small{display:block;color:var(--muted);line-height:1.55;margin-top:13px}.foot{text-align:center;color:#9b8d83;font-size:11px;margin-top:17px;letter-spacing:.06em}
-.ticket-result{display:none;margin-top:16px;border:1px solid #65404a;border-radius:13px;padding:15px;background:rgba(255,255,255,.035)}.ticket-result h2{font:600 23px Georgia,serif;margin:0 0 12px;overflow-wrap:anywhere}.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.detail{min-width:0;border:1px solid rgba(243,233,216,.12);border-radius:9px;padding:9px 10px;background:#100e0e}.detail.wide{grid-column:1/-1}.detail span{display:block;color:var(--muted);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}.detail strong{display:block;font-size:14px;overflow-wrap:anywhere}.confirm{width:100%;flex:1 1 100%;margin-top:13px;font-size:16px;min-height:52px}.result-actions{display:none}.result-actions button{flex:1 1 100%}.hidden{display:none!important}
+.ticket-result{display:none;margin-top:16px;border:1px solid #65404a;border-radius:13px;padding:15px;background:rgba(255,255,255,.035)}.ticket-result h2{font:600 23px Georgia,serif;margin:0 0 12px;overflow-wrap:anywhere}.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.detail{min-width:0;border:1px solid rgba(243,233,216,.12);border-radius:9px;padding:9px 10px;background:#100e0e}.detail.wide{grid-column:1/-1}.detail span{display:block;color:var(--muted);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}.detail strong{display:block;font-size:14px;overflow-wrap:anywhere}.confirm{width:100%;flex:1 1 100%;margin-top:13px;font-size:16px;min-height:52px}.group-members{margin-top:14px;display:grid;gap:9px}.group-member{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid rgba(243,233,216,.14);border-radius:10px;background:#100e0e}.group-member button{flex:0 0 auto;min-height:40px;padding:9px 12px}.group-member .member-state{font-size:12px;color:var(--muted)}.group-confirm{width:100%;margin-top:12px;min-height:50px}.result-actions{display:none}.result-actions button{flex:1 1 100%}.hidden{display:none!important}
 @media(max-width:380px){.detail-grid{grid-template-columns:1fr}.detail.wide{grid-column:auto}.actions button{flex-basis:100%}.panel{border-radius:14px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 </style>
@@ -33,6 +33,8 @@ main{width:min(100%,620px);margin:0 auto;padding:clamp(8px,3vw,22px) 0}.brand{te
    <div class="detail"><span>Check-in</span><strong id="checkin">—</strong></div>
   </div>
   <button id="confirm" class="confirm hidden" disabled>Confirm check-in</button>
+  <div id="groupMembers" class="group-members"></div>
+  <button id="confirmGroup" class="group-confirm hidden" disabled>Confirm Entire Group</button>
  </section>
  <div id="nextActions" class="actions result-actions"><button id="nextScan" class="secondary">Scan next ticket</button></div>
  <small>Ticket details are validated by the signed-in admin dashboard. Entry is recorded only after staff confirmation.</small>
@@ -43,17 +45,23 @@ main{width:min(100%,620px);margin:0 auto;padding:clamp(8px,3vw,22px) 0}.brand{te
 <script>
 'use strict';
 const ALLOWED_DASHBOARD_ORIGIN='https://n-rpifu7l2mifpriqi5kxl2sq6nf2d7h76ci5umti-0lu-script.googleusercontent.com';
-const $=id=>document.getElementById(id),statusEl=$('status'),video=$('video'),startBtn=$('start'),stopBtn=$('stop'),resultPanel=$('ticketResult'),confirmBtn=$('confirm'),nextActions=$('nextActions');
+const $=id=>document.getElementById(id),statusEl=$('status'),video=$('video'),startBtn=$('start'),stopBtn=$('stop'),resultPanel=$('ticketResult'),confirmBtn=$('confirm'),confirmGroupBtn=$('confirmGroup'),groupMembersEl=$('groupMembers'),nextActions=$('nextActions');
 let stream=null,detector=null,running=false,scanTimer=0,scanGeneration=0,nonce='',dashboardOrigin='',pendingScanId='',pendingTicketId='',readyRetry=null,scanBusy=false,scanLoopBusy=false,canvas=null,ctx=null;
 const validId=v=>/^BDT-[A-Z0-9]{12}$/.test(v)||/^BD-COMP-[A-Z0-9]{10}$/.test(v);
 function setStatus(message,type){statusEl.textContent=message;statusEl.className='status'+(type?' '+type:'');}
 function stopCamera(){running=false;scanGeneration++;if(scanTimer)clearTimeout(scanTimer);scanTimer=0;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}video.srcObject=null;stopBtn.disabled=true;startBtn.disabled=false;}
-function clearResult(){resultPanel.style.display='none';confirmBtn.classList.add('hidden');confirmBtn.disabled=true;nextActions.style.display='none';pendingScanId='';pendingTicketId='';}
+function clearResult(){resultPanel.style.display='none';confirmBtn.classList.add('hidden');confirmBtn.disabled=true;confirmGroupBtn.classList.add('hidden');confirmGroupBtn.disabled=true;groupMembersEl.innerHTML='';nextActions.style.display='none';pendingScanId='';pendingTicketId='';}
 function showResult(r){
  const hasDetails=!!(r&&r.ticketId);resultPanel.style.display=hasDetails?'block':'none';
  $('attendeeName').textContent=r.attendeeName||'Ticket details';$('ticketId').textContent=r.ticketId||'—';$('registrationId').textContent=r.registrationId||'—';$('passes').textContent=r.passes==null||r.passes===''?'—':String(r.passes);$('payment').textContent=r.paymentStatus||'—';$('approval').textContent=r.registrationStatus||'—';$('checkin').textContent=r.checkInStatus||'—';
- const good=!!r.canCheckIn;confirmBtn.classList.toggle('hidden',!good);confirmBtn.disabled=!good;nextActions.style.display='flex';
+ const good=!!r.canCheckIn;confirmBtn.classList.add('hidden');confirmBtn.disabled=true;
+ const members=Array.isArray(r.groupMembers)?r.groupMembers:[];
+ groupMembersEl.innerHTML=members.map(m=>'<div class="group-member" data-member="'+String(m.ticketId||'').replace(/[^A-Z0-9-]/g,'')+'"><div><strong>'+escapeHtml(m.attendeeName||'Attendee')+'</strong><div class="member-state">'+escapeHtml(m.checkInStatus||'')+'</div></div>'+(m.canCheckIn?'<button type="button" data-confirm-member="'+String(m.ticketId||'').replace(/[^A-Z0-9-]/g,'')+'">Confirm</button>':'<span class="member-state">'+(m.checkInStatus==='CHECKED_IN'?'Checked in':'Not eligible')+'</span>')+'</div>').join('');
+ const groupReady=members.length>1&&members.some(m=>m.canCheckIn)&&members.every(m=>['VALID','CHECKED_IN'].includes(String(m.checkInStatus||'').toUpperCase()));
+ confirmGroupBtn.classList.toggle('hidden',!groupReady);confirmGroupBtn.disabled=!groupReady;nextActions.style.display='flex';
 }
+function escapeHtml(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function redrawGroup(members){groupMembersEl.innerHTML=(members||[]).map(m=>'<div class="group-member"><div><strong>'+escapeHtml(m.attendeeName||'Attendee')+'</strong><div class="member-state">'+escapeHtml(m.checkInStatus||'')+'</div></div>'+(m.canCheckIn?'<button type="button" data-confirm-member="'+escapeHtml(m.ticketId)+'">Confirm</button>':'<span class="member-state">'+(m.checkInStatus==='CHECKED_IN'?'Checked in':'Not eligible')+'</span>')+'</div>').join('');const ready=(members||[]).length>1&&members.some(m=>m.canCheckIn)&&members.every(m=>['VALID','CHECKED_IN'].includes(String(m.checkInStatus||'').toUpperCase()));confirmGroupBtn.classList.toggle('hidden',!ready);confirmGroupBtn.disabled=!ready;}
 function makeScanId(){return window.crypto&&crypto.randomUUID?crypto.randomUUID():(Date.now().toString(36)+Math.random().toString(36).slice(2));}
 function sendTicketId(value){
  const raw=String(value==null?'':value);
@@ -83,6 +91,8 @@ window.addEventListener('message',event=>{
  if(d.nonce!==nonce||d.scanId!==pendingScanId)return;
  if(d.type==='BD_SCANNER_RESULT'){applyValidation(d.result||{});return;}
  if(d.type==='BD_SCANNER_CHECKIN_RESULT'){applyCheckin(d.result||{});return;}
+ if(d.type==='BD_SCANNER_MEMBER_CHECKIN_RESULT'){scanBusy=false;const r=d.result||{};if(r.groupMembers)redrawGroup(r.groupMembers);setStatus(r.message||'Member check-in updated.',r.success?'ok':'error');return;}
+ if(d.type==='BD_SCANNER_GROUP_CHECKIN_RESULT'){scanBusy=false;const r=d.result||{};if(r.groupMembers)redrawGroup(r.groupMembers);setStatus(r.message||'Group check-in completed.',r.success?'ok':'error');confirmGroupBtn.textContent=r.success?'Group check-in complete':'Retry group confirmation';confirmGroupBtn.disabled=!r.success;return;}
 });
 function announceReady(){if(window.opener&&!window.opener.closed&&!nonce)window.opener.postMessage({type:'BD_SCANNER_READY'},ALLOWED_DASHBOARD_ORIGIN);}
 if(window.opener){announceReady();readyRetry=setInterval(announceReady,250);setTimeout(()=>{if(readyRetry&&!nonce){clearInterval(readyRetry);readyRetry=null;setStatus('Could not connect. Close this tab and reopen the scanner from the admin dashboard.','error');}},20000);}
@@ -125,7 +135,9 @@ confirmBtn.addEventListener('click',()=>{
  scanBusy=true;confirmBtn.disabled=true;setStatus('Confirming entry securely…');
  window.opener.postMessage({type:'BD_TICKET_CONFIRM',nonce:nonce,scanId:pendingScanId,ticketId:pendingTicketId},dashboardOrigin);
 });
-$('nextScan').addEventListener('click',()=>{clearResult();setStatus('Ready for the next ticket. Start the camera or enter an ID.');startBtn.focus();});
+groupMembersEl.addEventListener('click',e=>{const b=e.target.closest('[data-confirm-member]');if(!b||scanBusy||!pendingScanId||!pendingTicketId||!nonce||!window.opener||window.opener.closed)return;scanBusy=true;b.disabled=true;b.textContent='Saving…';window.opener.postMessage({type:'BD_TICKET_CONFIRM_MEMBER',nonce:nonce,scanId:pendingScanId,ticketId:b.dataset.confirmMember},dashboardOrigin);});
+confirmGroupBtn.addEventListener('click',()=>{if(scanBusy||confirmGroupBtn.disabled||!pendingScanId||!pendingTicketId||!window.opener||window.opener.closed)return;scanBusy=true;confirmGroupBtn.disabled=true;confirmGroupBtn.textContent='Confirming group…';window.opener.postMessage({type:'BD_TICKET_CONFIRM_GROUP',nonce:nonce,scanId:pendingScanId,registrationId:$('registrationId').textContent},dashboardOrigin);});
+$('nextScan').addEventListener('click',()=>{clearResult();confirmGroupBtn.textContent='Confirm Entire Group';setStatus('Ready for the next ticket. Start the camera or enter an ID.');startBtn.focus();});
 window.addEventListener('pagehide',()=>{stopCamera();if(readyRetry)clearInterval(readyRetry);});
 </script>
 </body></html>
