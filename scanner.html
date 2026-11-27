@@ -18,7 +18,6 @@ main{width:min(100%,620px);margin:0 auto;padding:clamp(8px,3vw,22px) 0}.brand{te
 <header class="brand"><div class="eyebrow">Official event entry</div><h1>Badtameez Dil</h1><p>Secure QR check-in</p></header>
 <section class="panel">
  <div id="status" class="status" role="status" aria-live="polite">Connecting securely to the admin dashboard…</div>
- <small id="decodeDebug" class="hidden" aria-live="polite"></small>
  <video id="video" class="camera" playsinline muted autoplay></video>
  <div class="actions"><button id="start">Start camera</button><button id="stop" class="secondary" disabled>Stop camera</button></div>
  <div class="field"><label for="manual">Manual ticket ID</label><input id="manual" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="BDT-3A6643857B1D"></div>
@@ -45,13 +44,10 @@ main{width:min(100%,620px);margin:0 auto;padding:clamp(8px,3vw,22px) 0}.brand{te
 'use strict';
 const ALLOWED_DASHBOARD_ORIGIN='https://n-rpifu7l2mifpriqi5kxl2sq6nf2d7h76ci5umti-0lu-script.googleusercontent.com';
 const $=id=>document.getElementById(id),statusEl=$('status'),video=$('video'),startBtn=$('start'),stopBtn=$('stop'),resultPanel=$('ticketResult'),confirmBtn=$('confirm'),nextActions=$('nextActions');
-let stream=null,detector=null,running=false,scanTimer=0,nonce='',dashboardOrigin='',pendingScanId='',pendingTicketId='',readyRetry=null,scanBusy=false,scanLoopSession=0,cameraSession=0,canvas=null,ctx=null;
+let stream=null,detector=null,running=false,scanTimer=0,scanGeneration=0,nonce='',dashboardOrigin='',pendingScanId='',pendingTicketId='',readyRetry=null,scanBusy=false,scanLoopBusy=false,canvas=null,ctx=null;
 const validId=v=>/^BDT-[A-Z0-9]{12}$/.test(v)||/^BD-COMP-[A-Z0-9]{10}$/.test(v);
-function normalizeTicketValue(value){return String(value==null?'':value).replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/[\u0000-\u001F\u007F]/g,'').replace(/\s+/g,'').toUpperCase();}
 function setStatus(message,type){statusEl.textContent=message;statusEl.className='status'+(type?' '+type:'');}
-function showDecodeDebug(raw,normalized){const el=$('decodeDebug');el.classList.remove('hidden');el.textContent='QR diagnostic — decoded: '+JSON.stringify(String(raw==null?'':raw).slice(0,180))+'; normalized: '+JSON.stringify(normalized.slice(0,180));}
-function clearDecodeDebug(){$('decodeDebug').classList.add('hidden');$('decodeDebug').textContent='';}
-function stopCamera(){cameraSession++;running=false;if(scanTimer)clearTimeout(scanTimer);scanTimer=0;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}video.pause();video.srcObject=null;detector=null;stopBtn.disabled=true;startBtn.disabled=false;}
+function stopCamera(){running=false;scanGeneration++;if(scanTimer)clearTimeout(scanTimer);scanTimer=0;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}video.srcObject=null;stopBtn.disabled=true;startBtn.disabled=false;}
 function clearResult(){resultPanel.style.display='none';confirmBtn.classList.add('hidden');confirmBtn.disabled=true;nextActions.style.display='none';pendingScanId='';pendingTicketId='';}
 function showResult(r){
  const hasDetails=!!(r&&r.ticketId);resultPanel.style.display=hasDetails?'block':'none';
@@ -60,136 +56,13 @@ function showResult(r){
 }
 function makeScanId(){return window.crypto&&crypto.randomUUID?crypto.randomUUID():(Date.now().toString(36)+Math.random().toString(36).slice(2));}
 function sendTicketId(value){
- const raw=String(value==null?'':value),id=normalizeTicketValue(raw);
- if(!validId(id)){showDecodeDebug(raw,id);setStatus('Invalid QR content. The decoded text is shown below. Check that this QR contains only a BDT ticket ID.','error');return;}
- if(!window.opener||window.opener.closed||!nonce||!dashboardOrigin){setStatus('Dashboard connection unavailable. Reopen the scanner from the signed-in dashboard.','error');return;}
- if(scanBusy)return;clearDecodeDebug();scanBusy=true;stopCamera();clearResult();pendingTicketId=id;pendingScanId=makeScanId();$('manual').value=id;setStatus('Ticket scanned. Checking eligibility…');
- window.opener.postMessage({type:'BD_TICKET_SCAN',nonce:nonce,scanId:pendingScanId,ticketId:id},dashboardOrigin);
-}
-function applyValidation(r){scanBusy=false;showResult(r||{});setStatus((r&&r.message)||'Validation completed.',r&&r.canCheckIn?'ok':'error');}
-function applyCheckin(r){
- scanBusy=false;if(r&&r.success){if(r.checkInStatus)$('checkin').textContent=r.checkInStatus;confirmBtn.classList.add('hidden');confirmBtn.disabled=true;setStatus(r.message||'ENTRY ACCEPTED','ok');}
- else{setStatus((r&&r.message)||'Check-in could not be completed.','error');confirmBtn.classList.add('hidden');confirmBtn.disabled=true;}
- nextActions.style.display='flex';pendingScanId='';pendingTicketId='';
-}
-window.addEventListener('message',event=>{
- if(event.source!==window.opener||event.origin!==ALLOWED_DASHBOARD_ORIGIN||!event.data||typeof event.data!=='object')return;
- const d=event.data;
- if(d.type==='BD_SCANNER_INIT'&&typeof d.nonce==='string'&&/^[a-f0-9]{64}$/.test(d.nonce)){
-  nonce=d.nonce;dashboardOrigin=event.origin;if(readyRetry){clearInterval(readyRetry);readyRetry=null;}
-  window.opener.postMessage({type:'BD_SCANNER_CONNECTED',nonce:nonce},dashboardOrigin);setStatus('Connected securely. Start the camera and scan a ticket.','ok');return;
+ const raw=String(value==null?'':value);
+ const id=raw.replace(/[\u200B-\u200D\uFEFF]/g,'').replace(/\s+/g,'').trim().toUpperCase();
+ if(!validId(id)){
+  const shown=raw.replace(/[\r\n\t]/g,' ').slice(0,100);
+  setStatus('Invalid QR content. Decoded value: '+JSON.stringify(shown)+'. Expected BDT- plus 12 characters or BD-COMP- plus 10 characters.','error');
+  return;
  }
- if(d.nonce!==nonce||d.scanId!==pendingScanId)return;
- if(d.type==='BD_SCANNER_RESULT'){applyValidation(d.result||{});return;}
- if(d.type==='BD_SCANNER_CHECKIN_RESULT'){applyCheckin(d.result||{});return;}
-});
-function announceReady(){if(window.opener&&!window.opener.closed&&!nonce)window.opener.postMessage({type:'BD_SCANNER_READY'},ALLOWED_DASHBOARD_ORIGIN);}
-if(window.opener){announceReady();readyRetry=setInterval(announceReady,250);setTimeout(()=>{if(readyRetry&&!nonce){clearInterval(readyRetry);readyRetry=null;setStatus('Could not connect. Close this tab and reopen the scanner from the admin dashboard.','error');}},20000);}
-else setStatus('Open this scanner using the Open QR Scanner button inside the signed-in admin dashboard.','error');
-async function startCamera(){
- if(running)return;if(!window.isSecureContext||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){setStatus('Camera requires HTTPS and browser camera permission. Use manual ticket ID entry if needed.','error');return;}
- if(!nonce||!dashboardOrigin){setStatus('Waiting for secure dashboard connection. Reopen this page from the admin dashboard.','error');return;}
- const session=++cameraSession;
- try{
-  setStatus('Starting camera…');
-  const newStream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:24,max:30}}});
-  if(session!==cameraSession){newStream.getTracks().forEach(t=>t.stop());return;}
-  stream=newStream;video.srcObject=stream;await video.play();
-  if(session!==cameraSession)return;
-  const track=stream.getVideoTracks()[0];if(track&&track.applyConstraints){try{await track.applyConstraints({advanced:[{focusMode:'continuous'}]});}catch(e){}}
-  detector=null;if('BarcodeDetector'in window){try{detector=new BarcodeDetector({formats:['qr_code']});}catch(e){}}
-  if(!detector&&typeof window.jsQR!=='function')throw new Error('QR decoder unavailable. Check internet or enter the ticket ID manually.');
-  running=true;startBtn.disabled=true;stopBtn.disabled=false;setStatus('Camera active. Hold the QR code steady inside the frame.');scanFrame(session);
- }catch(e){if(session!==cameraSession)return;stopCamera();if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError')setStatus('Camera permission denied. Allow Camera for this HTTPS scanner site in browser settings.','error');else if(e.name==='NotFoundError'||e.name==='DevicesNotFoundError')setStatus('No camera found. Use manual ticket ID entry.','error');else if(e.name==='NotReadableError'||e.name==='TrackStartError')setStatus('Camera is busy in another app. Close other camera apps and retry.','error');else setStatus(e.message||'Unable to start camera.','error');}
-}
-async function scanFrame(session=cameraSession){
- if(!running||session!==cameraSession||scanLoopSession===session)return;scanLoopSession=session;
- try{
-  if(video.readyState>=2){
-   if(detector){const codes=await detector.detect(video);if(!running||session!==cameraSession)return;if(codes.length){sendTicketId(codes[0].rawValue);return;}}
-   else{
-    const maxSide=720,scale=Math.min(1,maxSide/Math.max(video.videoWidth,video.videoHeight));const w=Math.max(1,Math.round(video.videoWidth*scale)),h=Math.max(1,Math.round(video.videoHeight*scale));
-    if(!canvas){canvas=document.createElement('canvas');ctx=canvas.getContext('2d',{willReadFrequently:true});}
-    if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
-    ctx.drawImage(video,0,0,w,h);const image=ctx.getImageData(0,0,w,h);const code=window.jsQR(image.data,w,h,{inversionAttempts:'dontInvert'});
-    if(!running||session!==cameraSession)return;if(code){sendTicketId(code.data);return;}
-   }
-  }
- }catch(e){if(session!==cameraSession)return;if(detector){detector=null;if(typeof window.jsQR!=='function'){stopCamera();setStatus('Native QR scanner failed and fallback is unavailable. Use manual entry.','error');return;}}}
- finally{if(scanLoopSession===session)scanLoopSession=0;}
- if(running&&session===cameraSession)scanTimer=setTimeout(()=>scanFrame(session),detector?90:120);
-}
-startBtn.addEventListener('click',startCamera);stopBtn.addEventListener('click',()=>{stopCamera();setStatus('Camera stopped.');});
-$('sendManual').addEventListener('click',()=>sendTicketId($('manual').value));$('manual').addEventListener('keydown',e=>{if(e.key==='Enter')sendTicketId(e.target.value);});
-confirmBtn.addEventListener('click',()=>{
- if(!pendingScanId||!pendingTicketId||confirmBtn.disabled||scanBusy)return;
- if(!window.opener||window.opener.closed){setStatus('Dashboard connection lost. Reopen the scanner.','error');return;}
- scanBusy=true;confirmBtn.disabled=true;setStatus('Confirming entry securely…');
- window.opener.postMessage({type:'BD_TICKET_CONFIRM',nonce:nonce,scanId:pendingScanId,ticketId:pendingTicketId},dashboardOrigin);
-});
-$('nextScan').addEventListener('click',()=>{clearResult();clearDecodeDebug();scanBusy=false;setStatus('Ready for the next ticket. Start the camera or enter an ID.');startBtn.focus();});
-window.addEventListener('pagehide',()=>{stopCamera();if(readyRetry)clearInterval(readyRetry);});
-</script>
-</body></html>
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#171313">
-<title>Badtameez Dil · QR Check-in</title>
-<style>
-:root{color-scheme:dark;--bg:#0c0b0b;--panel:#191414;--line:#56323c;--wine:#9d3046;--cream:#f3e9d8;--muted:#c9bbaa;--pink:#e7a0ae;--good:#a7e5b6;--bad:#ffb5bf}
-*{box-sizing:border-box}html{min-height:100%;background:var(--bg)}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top,#321a22 0,#0c0b0b 58%);color:var(--cream);font:15px system-ui,-apple-system,Segoe UI,sans-serif;padding:clamp(10px,3vw,22px);padding-bottom:calc(18px + env(safe-area-inset-bottom))}
-main{width:min(100%,620px);margin:0 auto;padding:clamp(8px,3vw,22px) 0}.brand{text-align:center;margin:8px 0 20px}.eyebrow{font-size:10px;letter-spacing:.3em;color:var(--pink);text-transform:uppercase}.brand h1{font:600 clamp(30px,8vw,40px) Georgia,serif;margin:8px 0 4px}.brand p{color:var(--muted);margin:0;font-size:13px}
-.panel{background:rgba(25,20,20,.97);border:1px solid var(--line);border-radius:18px;padding:clamp(14px,4vw,22px);box-shadow:0 20px 60px #0008}.status{padding:12px 14px;border:1px solid #49343a;border-radius:10px;color:var(--muted);line-height:1.5;margin-bottom:14px;min-height:46px}.status.error{color:var(--bad);border-color:#85404e}.status.ok{color:var(--good);border-color:#3f7650}.camera{width:100%;aspect-ratio:4/3;max-height: min(52vh,440px);object-fit:cover;background:#050505;border-radius:12px;border:1px solid #49343a;display:block}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:13px}button{border:0;border-radius:9px;padding:13px 17px;background:linear-gradient(135deg,#a43a51,#702033);color:white;font-weight:700;cursor:pointer;min-height:46px;touch-action:manipulation;flex:1 1 150px}button.secondary{background:#302529;border:1px solid #65404a}button:disabled{opacity:.52;cursor:not-allowed}.field{margin-top:17px}.field label{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#e6d7c5;margin-bottom:8px}input{width:100%;height:48px;border:1px solid #65404a;border-radius:9px;background:#100e0e;color:white;padding:0 13px;font-size:16px}small{display:block;color:var(--muted);line-height:1.55;margin-top:13px}.foot{text-align:center;color:#9b8d83;font-size:11px;margin-top:17px;letter-spacing:.06em}
-.ticket-result{display:none;margin-top:16px;border:1px solid #65404a;border-radius:13px;padding:15px;background:rgba(255,255,255,.035)}.ticket-result h2{font:600 23px Georgia,serif;margin:0 0 12px;overflow-wrap:anywhere}.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.detail{min-width:0;border:1px solid rgba(243,233,216,.12);border-radius:9px;padding:9px 10px;background:#100e0e}.detail.wide{grid-column:1/-1}.detail span{display:block;color:var(--muted);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}.detail strong{display:block;font-size:14px;overflow-wrap:anywhere}.confirm{width:100%;flex:1 1 100%;margin-top:13px;font-size:16px;min-height:52px}.result-actions{display:none}.result-actions button{flex:1 1 100%}.hidden{display:none!important}
-@media(max-width:380px){.detail-grid{grid-template-columns:1fr}.detail.wide{grid-column:auto}.actions button{flex-basis:100%}.panel{border-radius:14px}}
-@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
-</style>
-</head>
-<body>
-<main>
-<header class="brand"><div class="eyebrow">Official event entry</div><h1>Badtameez Dil</h1><p>Secure QR check-in</p></header>
-<section class="panel">
- <div id="status" class="status" role="status" aria-live="polite">Connecting securely to the admin dashboard…</div>
- <video id="video" class="camera" playsinline muted autoplay></video>
- <div class="actions"><button id="start">Start camera</button><button id="stop" class="secondary" disabled>Stop camera</button></div>
- <div class="field"><label for="manual">Manual ticket ID</label><input id="manual" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="BDT-3A6643857B1D"></div>
- <div class="actions"><button id="sendManual" class="secondary">Validate ticket ID</button></div>
- <section id="ticketResult" class="ticket-result" aria-live="polite">
-  <h2 id="attendeeName">Attendee</h2>
-  <div class="detail-grid">
-   <div class="detail"><span>Ticket ID</span><strong id="ticketId">—</strong></div>
-   <div class="detail"><span>Registration</span><strong id="registrationId">—</strong></div>
-   <div class="detail"><span>Passes</span><strong id="passes">—</strong></div>
-   <div class="detail"><span>Payment</span><strong id="payment">—</strong></div>
-   <div class="detail"><span>Approval</span><strong id="approval">—</strong></div>
-   <div class="detail"><span>Check-in</span><strong id="checkin">—</strong></div>
-  </div>
-  <button id="confirm" class="confirm hidden" disabled>Confirm check-in</button>
- </section>
- <div id="nextActions" class="actions result-actions"><button id="nextScan" class="secondary">Scan next ticket</button></div>
- <small>Ticket details are validated by the signed-in admin dashboard. Entry is recorded only after staff confirmation.</small>
-</section>
-<div class="foot">One ticket · One attendee · One entry</div>
-</main>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-<script>
-'use strict';
-const ALLOWED_DASHBOARD_ORIGIN='https://n-rpifu7l2mifpriqi5kxl2sq6nf2d7h76ci5umti-0lu-script.googleusercontent.com';
-const $=id=>document.getElementById(id),statusEl=$('status'),video=$('video'),startBtn=$('start'),stopBtn=$('stop'),resultPanel=$('ticketResult'),confirmBtn=$('confirm'),nextActions=$('nextActions');
-let stream=null,detector=null,running=false,scanTimer=0,nonce='',dashboardOrigin='',pendingScanId='',pendingTicketId='',readyRetry=null,scanBusy=false,scanLoopBusy=false,canvas=null,ctx=null;
-const validId=v=>/^BDT-[A-Z0-9]{12}$/.test(v)||/^BD-COMP-[A-Z0-9]{10}$/.test(v);
-function setStatus(message,type){statusEl.textContent=message;statusEl.className='status'+(type?' '+type:'');}
-function stopCamera(){running=false;if(scanTimer)clearTimeout(scanTimer);scanTimer=0;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}video.srcObject=null;stopBtn.disabled=true;startBtn.disabled=false;}
-function clearResult(){resultPanel.style.display='none';confirmBtn.classList.add('hidden');confirmBtn.disabled=true;nextActions.style.display='none';pendingScanId='';pendingTicketId='';}
-function showResult(r){
- const hasDetails=!!(r&&r.ticketId);resultPanel.style.display=hasDetails?'block':'none';
- $('attendeeName').textContent=r.attendeeName||'Ticket details';$('ticketId').textContent=r.ticketId||'—';$('registrationId').textContent=r.registrationId||'—';$('passes').textContent=r.passes==null||r.passes===''?'—':String(r.passes);$('payment').textContent=r.paymentStatus||'—';$('approval').textContent=r.registrationStatus||'—';$('checkin').textContent=r.checkInStatus||'—';
- const good=!!r.canCheckIn;confirmBtn.classList.toggle('hidden',!good);confirmBtn.disabled=!good;nextActions.style.display='flex';
-}
-function makeScanId(){return window.crypto&&crypto.randomUUID?crypto.randomUUID():(Date.now().toString(36)+Math.random().toString(36).slice(2));}
-function sendTicketId(value){
- const id=String(value||'').trim().toUpperCase();if(!validId(id)){setStatus('Invalid QR content. Enter a valid BDT ticket ID.','error');return;}
  if(!window.opener||window.opener.closed||!nonce||!dashboardOrigin){setStatus('Dashboard connection unavailable. Reopen the scanner from the signed-in dashboard.','error');return;}
  if(scanBusy)return;scanBusy=true;stopCamera();clearResult();pendingTicketId=id;pendingScanId=makeScanId();$('manual').value=id;setStatus('Ticket scanned. Checking eligibility…');
  window.opener.postMessage({type:'BD_TICKET_SCAN',nonce:nonce,scanId:pendingScanId,ticketId:id},dashboardOrigin);
@@ -224,25 +97,25 @@ async function startCamera(){
   const track=stream.getVideoTracks()[0];if(track&&track.applyConstraints){try{await track.applyConstraints({advanced:[{focusMode:'continuous'}]});}catch(e){}}
   detector=null;if('BarcodeDetector'in window){try{detector=new BarcodeDetector({formats:['qr_code']});}catch(e){}}
   if(!detector&&typeof window.jsQR!=='function')throw new Error('QR decoder unavailable. Check internet or enter the ticket ID manually.');
-  running=true;startBtn.disabled=true;stopBtn.disabled=false;setStatus('Camera active. Hold the QR code steady inside the frame.');scanFrame();
+  running=true;const generation=++scanGeneration;startBtn.disabled=true;stopBtn.disabled=false;setStatus('Camera active. Hold the QR code steady inside the frame.');scanFrame(generation);
  }catch(e){stopCamera();if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError')setStatus('Camera permission denied. Allow Camera for this HTTPS scanner site in browser settings.','error');else if(e.name==='NotFoundError'||e.name==='DevicesNotFoundError')setStatus('No camera found. Use manual ticket ID entry.','error');else if(e.name==='NotReadableError'||e.name==='TrackStartError')setStatus('Camera is busy in another app. Close other camera apps and retry.','error');else setStatus(e.message||'Unable to start camera.','error');}
 }
-async function scanFrame(){
- if(!running||scanLoopBusy)return;scanLoopBusy=true;
+async function scanFrame(generation){
+ if(!running||generation!==scanGeneration||scanLoopBusy)return;scanLoopBusy=true;
  try{
   if(video.readyState>=2){
-   if(detector){const codes=await detector.detect(video);if(codes.length){sendTicketId(codes[0].rawValue);return;}}
+   if(detector){const codes=await detector.detect(video);if(!running||generation!==scanGeneration)return;if(codes.length){sendTicketId(codes[0].rawValue);return;}}
    else{
     const maxSide=720,scale=Math.min(1,maxSide/Math.max(video.videoWidth,video.videoHeight));const w=Math.max(1,Math.round(video.videoWidth*scale)),h=Math.max(1,Math.round(video.videoHeight*scale));
     if(!canvas){canvas=document.createElement('canvas');ctx=canvas.getContext('2d',{willReadFrequently:true});}
     if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
     ctx.drawImage(video,0,0,w,h);const image=ctx.getImageData(0,0,w,h);const code=window.jsQR(image.data,w,h,{inversionAttempts:'dontInvert'});
-    if(code){sendTicketId(code.data);return;}
+    if(code){if(!running||generation!==scanGeneration)return;sendTicketId(code.data);return;}
    }
   }
  }catch(e){if(detector){detector=null;if(typeof window.jsQR!=='function'){stopCamera();setStatus('Native QR scanner failed and fallback is unavailable. Use manual entry.','error');return;}}}
  finally{scanLoopBusy=false;}
- if(running)scanTimer=setTimeout(scanFrame,detector?90:120);
+ if(running&&generation===scanGeneration)scanTimer=setTimeout(()=>scanFrame(generation),detector?90:120);
 }
 startBtn.addEventListener('click',startCamera);stopBtn.addEventListener('click',()=>{stopCamera();setStatus('Camera stopped.');});
 $('sendManual').addEventListener('click',()=>sendTicketId($('manual').value));$('manual').addEventListener('keydown',e=>{if(e.key==='Enter')sendTicketId(e.target.value);});
